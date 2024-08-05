@@ -1,65 +1,81 @@
-; bootloader.asm
-BITS 16
-org 0x7C00
+[BITS 16]
+[ORG 0x7C00]
 
 start:
-  ; Set up the stack
-  xor ax, ax
+  mov [BOOT_DRIVE], dl ; BIOS stores our boot drive in DL, so it's best to remember this for later
+
+  mov bp, 0x9000
+  mov sp, bp
+
+  call load_kernel
+
+  ; Switch to protected mode
+  cli                 ; Disable interrupts
+  lgdt [gdt_descriptor]
+  mov eax, cr0
+  or eax, 0x1
+  mov cr0, eax
+
+  jmp 0x08:protected_mode
+
+load_kernel:
+  ; Load the kernel (assuming it starts at sector 2)
+  mov bx, 0x1000      ; Address to load the kernel
+  mov dh, 2           ; Number of sectors to read
+  mov dl, [BOOT_DRIVE]
+  call disk_load
+  ret
+
+disk_load:
+  pusha
+
+  mov ah, 0x02        ; BIOS read sector function
+  mov al, dh          ; Number of sectors to read
+  mov ch, 0           ; Cylinder 0
+  mov cl, 2           ; Start reading from second sector (i.e., after the boot sector)
+  mov dh, 0           ; Head 0
+  ; dl = drive number is set as input to disk_load
+  int 0x13            ; BIOS interrupt
+  jc disk_error       ; Jump if error (i.e. carry flag set)
+
+  popa
+  ret
+
+disk_error:
+  popa
+  jmp hang
+
+sectors_error:
+  popa
+  jmp hang
+
+[BITS 32]
+protected_mode:
+  mov ax, 0x10        ; Data segment selector
   mov ds, ax
   mov es, ax
+  mov fs, ax
+  mov gs, ax
   mov ss, ax
-  mov sp, 0x7C00
+  mov esp, 0x9FFFF    ; Set up stack pointer
 
-  ; Print 'Loading kernel...'
-  mov ah, 0x0E
-  mov al, 'L'
-  int 0x10
-  mov al, 'o'
-  int 0x10
-  mov al, 'a'
-  int 0x10
-  mov al, 'd'
-  int 0x10
-  mov al, 'i'
-  int 0x10
-  mov al, 'n'
-  int 0x10
-  mov al, 'g'
-  int 0x10
-  mov al, ' '
-  int 0x10
-  mov al, 'k'
-  int 0x10
-  mov al, 'e'
-  int 0x10
-  mov al, 'r'
-  int 0x10
-  mov al, 'n'
-  int 0x10
-  mov al, 'e'
-  int 0x10
-  mov al, 'l'
-  int 0x10
-  mov al, '.'
-  int 0x10
-  mov al, '.'
-  int 0x10
-  mov al, '.'
-  int 0x10
+  call 0x1000         ; Jump to kernel entry point
 
-  ; Load kernel (Assume it's located at sector 2)
-  mov bx, 0x1000
-  mov ah, 0x02
-  mov al, 1
-  mov ch, 0
-  mov cl, 2
-  mov dh, 0
-  int 0x13
+hang:
+  hlt
+  jmp hang
 
-  ; Jump to kernel
-  jmp 0x1000:0
+BOOT_DRIVE db 0
 
-times 510 - ($ - $$) db 0
+gdt:
+  dq 0x0000000000000000   ; Null descriptor
+  dq 0x00CF9A000000FFFF   ; Code segment descriptor
+  dq 0x00CF92000000FFFF   ; Data segment descriptor
+
+gdt_descriptor:
+  dw gdt_end - gdt - 1
+  dd gdt
+gdt_end:
+
+times 510-($-$$) db 0
 dw 0xAA55
-
-
